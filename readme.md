@@ -1,17 +1,38 @@
-Exchange URL'lerini düzenlemenizi saðlar.
+Exchange URL'lerini dÃ¼zenlemenizi saÄŸlar.!
 
-Standart Exchange kurulumu sonrasýnda mail alýþveriþinin saðlýlý çalýþmasý için gereklidir.
+Standart Exchange kurulumu sonrasÄ±nda mail alÄ±ÅŸveriÅŸinin saÄŸlÄ±klÄ± Ã§alÄ±ÅŸmasÄ±nÄ± saÄŸlar.
 
+[Exchange2016]({{site.baseurl}}//Exchange%202016.png)
+
+**Ã–rnek**
 ```sh
-
-.ÖRNEK
+.Ã–RNEK
 .\SetExchangeURLs.ps1 -Server MB1 -InternalURL mail.maestropanel.com -ExternalURL mail.maestropanel.com
-
-
-.ÖRNEK
+.Ã–RNEK Multiple
 .\SetExchangeURLs.ps1 -Server MB1,MB2 -InternalURL mail.maestropanel.com -ExternalURL mail.maestropanel.com
-
-
-.ÖRNEK DAG
+.Ã–RNEK DAG
 .\SetExchangeURLs.ps1 -Server MB1,MB2 -InternalURL mail.maestropanel.com -ExternalURL mail.maestropanel.com
 ```
+
+**Neleri dÃ¼zenler?**
+- "NTLM" *VarsayÄ±lan yetkilendirme
+- "Outlook Web App URL"
+- "Exchange Kontrol Panel URL"
+- "ActiveSync URL"
+- "Exchange Web Servisleri URL"
+- "Ã‡evrimdÄ±ÅŸÄ± Address Defteri URL"
+- "MAPI/HTTP URL"
+- "Autodiscover URL"
+
+
+**DiÄŸer**
+
+_Destek_
+- Exchange Server 2016
+- Exchange Server 2013
+- Exchange Server 2010 SP2 & SP3 (CAS Ã¼zerinde)
+
+_Kaynak_
+-[_Powershell Script ile Exchange Server Internal & External URL YapÄ±landÄ±rma_](https://wiki.maestropanel.com/powershell-script-ile-exchange-server-internal-external-url-yapilandirma "Powershell Exchange Script")
+-[Configure Exchange 2016 external URLs](https://technet.microsoft.com/en-us/library/mt441781(v=exchg.150).aspx)
+-[Configure Exchange 2016 internal URLs](https://technet.microsoft.com/en-us/library/mt441779(v=exchg.150).aspx)
