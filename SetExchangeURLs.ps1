@@ -13,6 +13,7 @@
     - Optionally creates an Outbound Internet Send Connector.
     - Optionally configures global organization message size limits (Transport, Send, and Receive connectors).
     - Excludes the PowerShell Virtual Directory to preserve WinRM/EMS remoting connectivity.
+    - Displays helpful post-installation recommendations and health tips upon completion.
 
 .PARAMETER Server
     Specifies the target Exchange server name(s). Accepts an array of strings or pipeline input.
@@ -258,5 +259,35 @@ Process {
 }
 
 End {
-    Write-Host "[i] All tasks finished." -ForegroundColor Cyan
+    Write-Host "`n========================================================" -ForegroundColor Cyan
+    Write-Host " [✓] Execution Complete!" -ForegroundColor Cyan
+    Write-Host "========================================================" -ForegroundColor Cyan
+
+    # Smart Post-Installation Recommendations & Health Tips
+    Write-Host "`n[💡] Post-Installation Recommendations & Next Steps:" -ForegroundColor Magenta
+
+    # 1. Send Connector check
+    if (-not $CreateSendConnector) {
+        $hasSendConnector = Get-SendConnector -ErrorAction SilentlyContinue | Where-Object { 
+            $_.AddressSpaces | Where-Object { $_.Address -eq "*" }
+        }
+        if (-not $hasSendConnector) {
+            Write-Host "  * Send Connector : No outbound Internet connector (SMTP:*) was detected." -ForegroundColor Yellow
+            Write-Host "                     Tip: Rerun with '-CreateSendConnector' to automatically create one." -ForegroundColor DarkGray
+        }
+    }
+
+    # 2. Message Size check
+    if (-not $MaxMessageSize) {
+        $currentLimit = (Get-TransportConfig -ErrorAction SilentlyContinue).MaxSendSize
+        Write-Host "  * Message Limits : Current Transport limit is '$currentLimit'." -ForegroundColor Gray
+        Write-Host "                     Tip: Rerun with '-MaxMessageSize 50MB' to increase limits across all connectors." -ForegroundColor DarkGray
+    }
+
+    # 3. SSL Certificate Binding Tip
+    Write-Host "  * SSL Certificate: Ensure a valid third-party SSL certificate is assigned to IIS and SMTP services." -ForegroundColor Gray
+    Write-Host "                     Command: Enable-ExchangeCertificate -Thumbprint <THUMBPRINT> -Services IIS,SMTP" -ForegroundColor DarkGray
+
+    # 4. IIS Recycle Tip
+    Write-Host "  * IIS Recycle    : If URL changes are not immediately visible in EAC/clients, run 'iisreset' or restart AppPools.`n" -ForegroundColor Gray
 }
