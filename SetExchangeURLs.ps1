@@ -1,14 +1,18 @@
 <#
 .SYNOPSIS
-    Exchange Server Virtual Directory & Autodiscover URL Configuration Tool.
+    Exchange Server Virtual Directory, Autodiscover, and Post-Installation Config Tool.
 
 .DESCRIPTION
-    Configures Internal and External URLs for Client Access Services (OWA, ECP, 
-    ActiveSync, EWS, OAB, MAPI/HTTP, Autodiscover SCP, and Outlook Anywhere) 
-    across Microsoft Exchange Server 2013, 2016, 2019, and Subscription Edition.
-
-    Note: The PowerShell Virtual Directory is intentionally excluded to preserve 
-    WinRM / Exchange Management Shell remoting connectivity.
+    Automates post-installation configuration for Microsoft Exchange Server (2013, 2016, 
+    2019, and Subscription Edition).
+    
+    Capabilities:
+    - Configures Internal and External URLs for Client Access Services (OWA, ECP, 
+      ActiveSync, EWS, OAB, MAPI/HTTP, and Outlook Anywhere).
+    - Sets or clears Active Directory Autodiscover SCP records (supports Office 365 / EXO Relay scenarios).
+    - Optionally creates an Outbound Internet Send Connector.
+    - Optionally configures global organization message size limits (Transport, Send, and Receive connectors).
+    - Excludes the PowerShell Virtual Directory to preserve WinRM/EMS remoting connectivity.
 
 .PARAMETER Server
     Specifies the target Exchange server name(s). Accepts an array of strings or pipeline input.
@@ -28,6 +32,18 @@
     Optional. Specifies a custom Autodiscover FQDN (e.g. autodiscover.domain.com). 
     If not specified, defaults to InternalURL.
 
+.PARAMETER DisableSCP
+    Optional switch. Clears the Active Directory Service Connection Point (sets AutoDiscoverServiceInternalUri to $null).
+    Recommended when Exchange is used solely as an internal SMTP Relay while mailboxes reside in Office 365 / EXO.
+
+.PARAMETER CreateSendConnector
+    Optional switch. Automatically creates an Outbound Internet Send Connector ("Outbound to Internet") 
+    using DNS routing if no wildcard (SMTP:*) Send Connector currently exists.
+
+.PARAMETER MaxMessageSize
+    Optional. Sets global message size limits across TransportConfig, all Send Connectors, 
+    and all Receive Connectors (e.g. "50MB", "100MB").
+
 .PARAMETER InternalSSL
     Specifies whether internal clients require SSL for Outlook Anywhere. Default is $true.
 
@@ -38,10 +54,10 @@
     .\SetExchangeURLs.ps1 -Server "EXCH01" -InternalURL "mail.contoso.com" -ExternalURL "mail.contoso.com"
 
 .EXAMPLE
-    .\SetExchangeURLs.ps1 -Server "EXCH01","EXCH02" -InternalURL "mail.contoso.com" -ExternalURL "mail.contoso.com" -WhatIf
+    .\SetExchangeURLs.ps1 -Server "EXCH01","EXCH02" -InternalURL "mail.contoso.com" -ExternalURL "mail.contoso.com" -CreateSendConnector -MaxMessageSize "50MB"
 
 .EXAMPLE
-    .\SetExchangeURLs.ps1 -Server "EXCH01" -InternalURL "mail.contoso.com" -ExternalURL "" -AutodiscoverURL "autodiscover.contoso.com"
+    .\SetExchangeURLs.ps1 -Server "EXCH-RELAY" -InternalURL "mail.contoso.com" -ExternalURL "" -DisableSCP
 
 .NOTES
     Author : Ugur CIVAK
@@ -72,6 +88,15 @@ param(
     [string]$AutodiscoverURL,
 
     [Parameter(Mandatory=$false)]
+    [switch]$DisableSCP,
+
+    [Parameter(Mandatory=$false)]
+    [switch]$CreateSendConnector,
+
+    [Parameter(Mandatory=$false)]
+    [string]$MaxMessageSize,
+
+    [Parameter(Mandatory=$false)]
     [bool]$InternalSSL = $true,
 
     [Parameter(Mandatory=$false)]
@@ -93,12 +118,48 @@ Begin {
     if (Get-Command Get-ExchangeServer -ErrorAction SilentlyContinue) {
         Write-Verbose "Exchange cmdlets are already loaded in current session."
     } elseif (Test-Path "$env:ExchangeInstallPath\bin\RemoteExchange.ps1") {
-        Write-Verbose "Loading Exchange Management snap-in/session..."
+        Write-Verbose "Loading Exchange Management session..."
         . "$env:ExchangeInstallPath\bin\RemoteExchange.ps1"
         Connect-ExchangeServer -auto -AllowClobber | Out-Null
     } else {
         Write-Error "Exchange Server Management Tools were not found on this machine."
         return
+    }
+
+    # 3. Organization-Wide Message Size Configuration (if requested)
+    if ($MaxMessageSize) {
+        if ($PSCmdlet.ShouldProcess("Organization", "Set TransportConfig MaxSendSize & MaxReceiveSize to $MaxMessageSize")) {
+            Write-Host "[+] Configuring Organization Message Size Limits ($MaxMessageSize)..." -ForegroundColor Yellow
+            try {
+                Set-TransportConfig -MaxSendSize $MaxMessageSize -MaxReceiveSize $MaxMessageSize -ErrorAction Stop
+                Get-SendConnector -ErrorAction SilentlyContinue | Set-SendConnector -MaxMessageSize $MaxMessageSize -ErrorAction SilentlyContinue
+                Get-ReceiveConnector -ErrorAction SilentlyContinue | Set-ReceiveConnector -MaxMessageSize $MaxMessageSize -ErrorAction SilentlyContinue
+                Write-Host "    [✓] Organization Transport, Send, and Receive connector limits set to $MaxMessageSize." -ForegroundColor Green
+            } catch {
+                Write-Warning "[-] Failed to set message size limits: $($_.Exception.Message)"
+            }
+        }
+    }
+
+    # 4. Outbound Internet Send Connector Configuration (if requested)
+    if ($CreateSendConnector) {
+        if ($PSCmdlet.ShouldProcess("Organization", "Check/Create Outbound Internet Send Connector")) {
+            Write-Host "[+] Checking Outbound Internet Send Connector..." -ForegroundColor Yellow
+            $existingSendConnector = Get-SendConnector -ErrorAction SilentlyContinue | Where-Object { 
+                $_.AddressSpaces | Where-Object { $_.Address -eq "*" }
+            }
+
+            if ($existingSendConnector) {
+                Write-Host "    [i] Outbound Send Connector already exists: '$($existingSendConnector.Name)'" -ForegroundColor Gray
+            } else {
+                try {
+                    New-SendConnector -Name "Outbound to Internet" -Usage Internet -AddressSpaces "SMTP:*;1" -DNSRoutingEnabled $true -SourceTransportServers $Server -ErrorAction Stop
+                    Write-Host "    [✓] Successfully created 'Outbound to Internet' Send Connector." -ForegroundColor Green
+                } catch {
+                    Write-Warning "[-] Failed to create Send Connector: $($_.Exception.Message)"
+                }
+            }
+        }
     }
 }
 
@@ -121,7 +182,11 @@ Process {
         Write-Host " Internal URL       : https://$InternalURL" -ForegroundColor Gray
         Write-Host " External URL       : $(if ($ExternalURL) { "https://$ExternalURL" } else { "[DISABLED / NULL]" })" -ForegroundColor Gray
         Write-Host " Authentication     : $DefaultAuth" -ForegroundColor Gray
-        Write-Host " Autodiscover SCP   : https://$(if ($AutodiscoverURL) { $AutodiscoverURL } else { $InternalURL })/Autodiscover/Autodiscover.xml" -ForegroundColor Gray
+        if ($DisableSCP) {
+            Write-Host " Autodiscover SCP   : [DISABLED / NULL] (EXO / Relay Scenario)" -ForegroundColor Gray
+        } else {
+            Write-Host " Autodiscover SCP   : https://$(if ($AutodiscoverURL) { $AutodiscoverURL } else { $InternalURL })/Autodiscover/Autodiscover.xml" -ForegroundColor Gray
+        }
         Write-Host "========================================================`n" -ForegroundColor Green
 
         if ($PSCmdlet.ShouldProcess($srv, "Configure Virtual Directory and Autodiscover URLs")) {
@@ -168,14 +233,23 @@ Process {
             Get-MapiVirtualDirectory -Server $srv -ErrorAction SilentlyContinue | Set-MapiVirtualDirectory -InternalUrl "https://$InternalURL/mapi" -ExternalUrl (Get-VDirExtUrl "mapi")
 
             # 8. Autodiscover Service Internal URI (Active Directory SCP)
-            Write-Host "[+] Configuring Autodiscover SCP Internal URI..." -ForegroundColor Yellow
-            $targetScpDomain = if ($AutodiscoverURL) { $AutodiscoverURL } else { $InternalURL }
-            $autoDiscoverUri = "https://$targetScpDomain/Autodiscover/Autodiscover.xml"
-
-            if (Get-Command Set-ClientAccessService -ErrorAction SilentlyContinue) {
-                Get-ClientAccessService $srv | Set-ClientAccessService -AutoDiscoverServiceInternalUri $autoDiscoverUri
+            if ($DisableSCP) {
+                Write-Host "[+] Disabling Autodiscover SCP (setting to `$null for EXO/Relay scenario)..." -ForegroundColor Yellow
+                if (Get-Command Set-ClientAccessService -ErrorAction SilentlyContinue) {
+                    Get-ClientAccessService $srv | Set-ClientAccessService -AutoDiscoverServiceInternalUri $null
+                } else {
+                    Get-ClientAccessServer $srv | Set-ClientAccessServer -AutoDiscoverServiceInternalUri $null
+                }
             } else {
-                Get-ClientAccessServer $srv | Set-ClientAccessServer -AutoDiscoverServiceInternalUri $autoDiscoverUri
+                Write-Host "[+] Configuring Autodiscover SCP Internal URI..." -ForegroundColor Yellow
+                $targetScpDomain = if ($AutodiscoverURL) { $AutodiscoverURL } else { $InternalURL }
+                $autoDiscoverUri = "https://$targetScpDomain/Autodiscover/Autodiscover.xml"
+
+                if (Get-Command Set-ClientAccessService -ErrorAction SilentlyContinue) {
+                    Get-ClientAccessService $srv | Set-ClientAccessService -AutoDiscoverServiceInternalUri $autoDiscoverUri
+                } else {
+                    Get-ClientAccessServer $srv | Set-ClientAccessServer -AutoDiscoverServiceInternalUri $autoDiscoverUri
+                }
             }
 
             Write-Host "`n[✓] Successfully configured '$srv'.`n" -ForegroundColor Green
