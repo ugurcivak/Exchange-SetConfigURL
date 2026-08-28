@@ -87,14 +87,6 @@ Post-installation configuration of Microsoft Exchange Server requires setting up
 
 ---
 
-## 👤 Author
-
-* **Uğur CIVAK**
-* GitHub: [@ugurcivak](https://github.com/ugurcivak)
-* Website: [sistemduragi.com](https://www.sistemduragi.com) / [maestropanel.com](https://www.maestropanel.com)
-
----
-
 ## 📄 License
 
 This project is licensed under the [MIT License](LICENSE).

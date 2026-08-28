@@ -43,6 +43,10 @@
 .EXAMPLE
     .\SetExchangeURLs.ps1 -Server "EXCH01" -InternalURL "mail.contoso.com" -ExternalURL "" -AutodiscoverURL "autodiscover.contoso.com"
 
+.NOTES
+    Author : Ugur CIVAK
+    GitHub : https://github.com/ugurcivak/Exchange-SetConfigURL
+
 .LINK
     https://github.com/ugurcivak/Exchange-SetConfigURL
 #>
