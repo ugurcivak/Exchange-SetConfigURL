@@ -1,173 +1,184 @@
-﻿<#
-.ÖZET
-SetExchangeURLs.ps1
+<#
+.SYNOPSIS
+    Exchange Server Virtual Directory & Autodiscover URL Configuration Tool.
 
-.AÇIKLAMA
-Powershell scripti ile Exchange Server 2013/2016, CAS URL kayıtlarını basitçe yapılandırılabilir. 
+.DESCRIPTION
+    Configures Internal and External URLs for Client Access Services (OWA, ECP, 
+    ActiveSync, EWS, OAB, MAPI/HTTP, Autodiscover SCP, and Outlook Anywhere) 
+    across Microsoft Exchange Server 2013, 2016, 2019, and Subscription Edition.
 
-Servisler için farklı alan adları/uzantısı kullanıyorsanız uygulamaz ve hata verir.
+    Note: The PowerShell Virtual Directory is intentionally excluded to preserve 
+    WinRM / Exchange Management Shell remoting connectivity.
 
-.PARAMETRE Server
-Yapılandırma yapılacak sunucu(lar) adı.
+.PARAMETER Server
+    Specifies the target Exchange server name(s). Accepts an array of strings or pipeline input.
 
-.PARAMETRE InternalURL
-Kullanılacak Internal alan bilgisi.
+.PARAMETER InternalURL
+    Specifies the internal FQDN (e.g. mail.domain.com).
 
-.PARAMETRE ExternalURL
-Kullanılacak External alan bilgisi.
+.PARAMETER ExternalURL
+    Specifies the external FQDN (e.g. mail.domain.com). 
+    If left empty or set to "", External URLs will be reset to $null (Internal-only / Split-DNS).
 
-.ÖRNEK
-.\SetExchangeURLs.ps1 -Server MB1 -InternalURL mail.maestropanel.com -ExternalURL mail.maestropanel.com
+.PARAMETER DefaultAuth
+    Specifies the default authentication method for Outlook Anywhere.
+    Supported values: 'Negotiate', 'NTLM', 'Basic'. Default is 'Negotiate'.
 
-.ÖRNEK
-.\SetExchangeURLs.ps1 -Server MB1,MB2 -InternalURL mail.maestropanel.com -ExternalURL mail.maestropanel.com
+.PARAMETER AutodiscoverURL
+    Optional. Specifies a custom Autodiscover FQDN (e.g. autodiscover.domain.com). 
+    If not specified, defaults to InternalURL.
 
-.ÖRNEK DAG
-.\SetExchangeURLs.ps1 -Server MB1,MB2 -InternalURL mail.maestropanel.com -ExternalURL mail.maestropanel.com
+.PARAMETER InternalSSL
+    Specifies whether internal clients require SSL for Outlook Anywhere. Default is $true.
 
-.URL
-https://wiki.maestropanel.com/powershell-script-ile-exchange-internalexternal-url
+.PARAMETER ExternalSSL
+    Specifies whether external clients require SSL for Outlook Anywhere. Default is $true.
 
-.EK BİLGİ
+.EXAMPLE
+    .\SetExchangeURLs.ps1 -Server "EXCH01" -InternalURL "mail.contoso.com" -ExternalURL "mail.contoso.com"
 
-Yazar: Uğur CIVAK
-Yazar: #Clone
+.EXAMPLE
+    .\SetExchangeURLs.ps1 -Server "EXCH01","EXCH02" -InternalURL "mail.contoso.com" -ExternalURL "mail.contoso.com" -WhatIf
 
-Daha fazla bilgi için,
+.EXAMPLE
+    .\SetExchangeURLs.ps1 -Server "EXCH01" -InternalURL "mail.contoso.com" -ExternalURL "" -AutodiscoverURL "autodiscover.contoso.com"
 
-* Website: https://www.maestropanel.com
-* Website: https://www.sistemduragi.com
-
-* Twitter: https://twitter.com/maestropanel
-* Twitter: https://twitter.com/ugurcivaks
+.LINK
+    https://github.com/ugurcivak/Exchange-SetConfigURL
 #>
 
-###########
-###Script##
-###########
-
-[CmdletBinding()]
+[CmdletBinding(SupportsShouldProcess=$true)]
 param(
-	[Parameter( Position=0,Mandatory=$true)]
-	[string[]]$Server,
+    [Parameter(Position=0, Mandatory=$true, ValueFromPipeline=$true)]
+    [string[]]$Server,
 
-	[Parameter( Mandatory=$true)]
-	[string]$InternalURL,
+    [Parameter(Mandatory=$true)]
+    [ValidateNotNullOrEmpty()]
+    [string]$InternalURL,
 
-	[Parameter( Mandatory=$true)]
+    [Parameter(Mandatory=$false)]
     [AllowEmptyString()]
-	[string]$ExternalURL,
+    [string]$ExternalURL = "",
 
-    [Parameter( Mandatory=$false)]
-    [string]$DefaultAuth="NTLM",
+    [Parameter(Mandatory=$false)]
+    [ValidateSet("Negotiate", "NTLM", "Basic")]
+    [string]$DefaultAuth = "Negotiate",
 
-    [Parameter( Mandatory=$false)]
-    [Boolean]$InternalSSL=$true,
+    [Parameter(Mandatory=$false)]
+    [string]$AutodiscoverURL,
 
-    [Parameter( Mandatory=$false)]
-    [Boolean]$ExternalSSL=$true
-	)
+    [Parameter(Mandatory=$false)]
+    [bool]$InternalSSL = $true,
 
-
-#...................................
-# Script
-#...................................
+    [Parameter(Mandatory=$false)]
+    [bool]$ExternalSSL = $true
+)
 
 Begin {
-
-    #Exchange Oturum Hazırlanıyor.
-    if (Test-Path $env:ExchangeInstallPath\bin\RemoteExchange.ps1)
-    {
-	    . $env:ExchangeInstallPath\bin\RemoteExchange.ps1
-	    Connect-ExchangeServer -auto -AllowClobber
+    # 1. Input Sanitization (strip http(s):// prefix and trailing slashes)
+    $InternalURL = $InternalURL -replace "^https?://", "" -replace "/+$", ""
+    if ($ExternalURL) {
+        $ExternalURL = $ExternalURL -replace "^https?://", "" -replace "/+$", ""
     }
-    else
-    {
-        Write-Warning "Exchange Server Management Tools kurulu değil."
-        EXIT
+    if ($AutodiscoverURL) {
+        $AutodiscoverURL = $AutodiscoverURL -replace "^https?://", "" -replace "/+$", ""
+    }
+
+    # 2. Exchange Session Verification
+    Write-Host "[*] Checking Exchange Management Session..." -ForegroundColor Cyan
+    if (Get-Command Get-ExchangeServer -ErrorAction SilentlyContinue) {
+        Write-Verbose "Exchange cmdlets are already loaded in current session."
+    } elseif (Test-Path "$env:ExchangeInstallPath\bin\RemoteExchange.ps1") {
+        Write-Verbose "Loading Exchange Management snap-in/session..."
+        . "$env:ExchangeInstallPath\bin\RemoteExchange.ps1"
+        Connect-ExchangeServer -auto -AllowClobber | Out-Null
+    } else {
+        Write-Error "Exchange Server Management Tools were not found on this machine."
+        return
     }
 }
 
 Process {
-
-    foreach ($i in $server)
-    {
-        if ((Get-ExchangeServer $i -ErrorAction SilentlyContinue).IsClientAccessServer)
-        {
-            Write-Host "----------------------------------------"
-            Write-Host " Yapılandırmalar $i üzerinde gerçekleşecek."
-            Write-Host "----------------------------------------`r`n"
-            Write-Host "Yapılandırmalar:"
-            Write-Host " - Internal URL: $InternalURL olarak yapılandırılacak"
-            Write-Host " - External URL: $ExternalURL olarak yapılandırılacak"
-            Write-Host " - Outlook Anywhere yetkilendirme : $Auth olarak yapılandırılacak"
-            Write-Host "`r`n"
-
-            Write-Host "Outlook Anywhere URL yapılandırılıyor"
-            Get-OutlookAnywhere -Server $i | Set-OutlookAnywhere -ExternalHostname $externalurl -InternalHostname $internalurl -ExternalClientsRequireSsl $ExternalSSL -InternalClientsRequireSsl $InternalSSL -DefaultAuthenticationMethod $DefaultAuth
-
-            if ($externalurl -eq "")
-            {
-                Write-Host "Outlook Web App URL yapılandırılıyor"
-                Get-OwaVirtualDirectory -Server $i | Set-OwaVirtualDirectory -ExternalUrl $null -InternalUrl https://$internalurl/owa
-
-                Write-Host "Exchange Control Panel URL yapılandırılıyor"
-                Get-EcpVirtualDirectory -Server $i | Set-EcpVirtualDirectory -ExternalUrl $null -InternalUrl https://$internalurl/ecp
-
-                Write-Host "ActiveSync URL yapılandırılıyor"
-                Get-ActiveSyncVirtualDirectory -Server $i | Set-ActiveSyncVirtualDirectory -ExternalUrl $null -InternalUrl https://$internalurl/Microsoft-Server-ActiveSync
-
-                Write-Host "Configuring Exchange Web Services URL yapılandırılıyor"
-                Get-WebServicesVirtualDirectory -Server $i | Set-WebServicesVirtualDirectory -ExternalUrl $null -InternalUrl https://$internalurl/EWS/Exchange.asmx
-
-                Write-Host "Configuring Offline Address Book URL yapılandırılıyor"
-                Get-OabVirtualDirectory -Server $i | Set-OabVirtualDirectory -ExternalUrl $null -InternalUrl https://$internalurl/OAB
-
-                Write-Host "Configuring MAPI/HTTP URL yapılandırılıyor"
-                Get-MapiVirtualDirectory -Server $i | Set-MapiVirtualDirectory -ExternalUrl $null -InternalUrl https://$internalurl/mapi
-            }
-            else
-            {
-                Write-Host "Outlook Web App URL yapılandırılıyor"
-                Get-OwaVirtualDirectory -Server $i | Set-OwaVirtualDirectory -ExternalUrl https://$externalurl/owa -InternalUrl https://$internalurl/owa
-
-                Write-Host "Exchange Control Panel URL yapılandırılıyor"
-                Get-EcpVirtualDirectory -Server $i | Set-EcpVirtualDirectory -ExternalUrl https://$externalurl/ecp -InternalUrl https://$internalurl/ecp
-
-                Write-Host "ActiveSync URL yapılandırılıyor"
-                Get-ActiveSyncVirtualDirectory -Server $i | Set-ActiveSyncVirtualDirectory -ExternalUrl https://$externalurl/Microsoft-Server-ActiveSync -InternalUrl https://$internalurl/Microsoft-Server-ActiveSync
-
-                Write-Host "Exchange Web Services URL yapılandırılıyor"
-                Get-WebServicesVirtualDirectory -Server $i | Set-WebServicesVirtualDirectory -ExternalUrl https://$externalurl/EWS/Exchange.asmx -InternalUrl https://$internalurl/EWS/Exchange.asmx
-
-                Write-Host "Offline Address Book URL yapılandırılıyor"
-                Get-OabVirtualDirectory -Server $i | Set-OabVirtualDirectory -ExternalUrl https://$externalurl/OAB -InternalUrl https://$internalurl/OAB
-
-                Write-Host "MAPI/HTTP URL yapılandırılıyor"
-                Get-MapiVirtualDirectory -Server $i | Set-MapiVirtualDirectory -ExternalUrl https://$externalurl/mapi -InternalUrl https://$internalurl/mapi
-            }
-
-
-
-            Write-Host "Autodiscover yapılandırılıyor"
-            Get-ClientAccessServer $i | Set-ClientAccessServer -AutoDiscoverServiceInternalUri https://$internalurl/Autodiscover/Autodiscover.xml
-
-            Write-Host "`r`n"
+    foreach ($srv in $Server) {
+        $exchServer = Get-ExchangeServer $srv -ErrorAction SilentlyContinue
+        if (-not $exchServer) {
+            Write-Warning "[-] Exchange server '$srv' was not found in Active Directory!"
+            continue
         }
-        else
-        {
-            Write-Host -ForegroundColor Yellow "$i Client Access server değil."
+
+        # Role verification (Exchange 2013 CAS or 2016/2019/SE Mailbox role)
+        if (-not ($exchServer.IsClientAccessServer -or $exchServer.IsMailboxServer)) {
+            Write-Warning "[-] '$srv' does not hold Client Access or Mailbox server role."
+            continue
+        }
+
+        Write-Host "`n========================================================" -ForegroundColor Green
+        Write-Host " Configuring Exchange Server: $srv" -ForegroundColor Green
+        Write-Host " Internal URL       : https://$InternalURL" -ForegroundColor Gray
+        Write-Host " External URL       : $(if ($ExternalURL) { "https://$ExternalURL" } else { "[DISABLED / NULL]" })" -ForegroundColor Gray
+        Write-Host " Authentication     : $DefaultAuth" -ForegroundColor Gray
+        Write-Host " Autodiscover SCP   : https://$(if ($AutodiscoverURL) { $AutodiscoverURL } else { $InternalURL })/Autodiscover/Autodiscover.xml" -ForegroundColor Gray
+        Write-Host "========================================================`n" -ForegroundColor Green
+
+        if ($PSCmdlet.ShouldProcess($srv, "Configure Virtual Directory and Autodiscover URLs")) {
+            
+            # Helper function to construct external virtual directory URL
+            function Get-VDirExtUrl([string]$path) {
+                if ($ExternalURL) { return "https://$ExternalURL/$path" } else { return $null }
+            }
+
+            # 1. Outlook Anywhere (RPC over HTTP)
+            Write-Host "[+] Configuring Outlook Anywhere..." -ForegroundColor Yellow
+            $oaParams = @{
+                InternalHostname            = $InternalURL
+                InternalClientsRequireSsl   = $InternalSSL
+                ExternalClientsRequireSsl   = $ExternalSSL
+                DefaultAuthenticationMethod = $DefaultAuth
+                ErrorAction                 = "SilentlyContinue"
+            }
+            if ($ExternalURL) { $oaParams["ExternalHostname"] = $ExternalURL }
+            Get-OutlookAnywhere -Server $srv -ErrorAction SilentlyContinue | Set-OutlookAnywhere @oaParams
+
+            # 2. OWA (Outlook on the web)
+            Write-Host "[+] Configuring Outlook on the Web (OWA)..." -ForegroundColor Yellow
+            Get-OwaVirtualDirectory -Server $srv | Set-OwaVirtualDirectory -InternalUrl "https://$InternalURL/owa" -ExternalUrl (Get-VDirExtUrl "owa")
+
+            # 3. ECP (Exchange Control Panel / Admin Center)
+            Write-Host "[+] Configuring Exchange Control Panel (ECP)..." -ForegroundColor Yellow
+            Get-EcpVirtualDirectory -Server $srv | Set-EcpVirtualDirectory -InternalUrl "https://$InternalURL/ecp" -ExternalUrl (Get-VDirExtUrl "ecp")
+
+            # 4. Exchange ActiveSync (EAS)
+            Write-Host "[+] Configuring Exchange ActiveSync (EAS)..." -ForegroundColor Yellow
+            Get-ActiveSyncVirtualDirectory -Server $srv | Set-ActiveSyncVirtualDirectory -InternalUrl "https://$InternalURL/Microsoft-Server-ActiveSync" -ExternalUrl (Get-VDirExtUrl "Microsoft-Server-ActiveSync")
+
+            # 5. EWS (Exchange Web Services)
+            Write-Host "[+] Configuring Exchange Web Services (EWS)..." -ForegroundColor Yellow
+            Get-WebServicesVirtualDirectory -Server $srv | Set-WebServicesVirtualDirectory -InternalUrl "https://$InternalURL/EWS/Exchange.asmx" -ExternalUrl (Get-VDirExtUrl "EWS/Exchange.asmx")
+
+            # 6. OAB (Offline Address Book)
+            Write-Host "[+] Configuring Offline Address Book (OAB)..." -ForegroundColor Yellow
+            Get-OabVirtualDirectory -Server $srv | Set-OabVirtualDirectory -InternalUrl "https://$InternalURL/OAB" -ExternalUrl (Get-VDirExtUrl "OAB")
+
+            # 7. MAPI over HTTP
+            Write-Host "[+] Configuring MAPI over HTTP..." -ForegroundColor Yellow
+            Get-MapiVirtualDirectory -Server $srv -ErrorAction SilentlyContinue | Set-MapiVirtualDirectory -InternalUrl "https://$InternalURL/mapi" -ExternalUrl (Get-VDirExtUrl "mapi")
+
+            # 8. Autodiscover Service Internal URI (Active Directory SCP)
+            Write-Host "[+] Configuring Autodiscover SCP Internal URI..." -ForegroundColor Yellow
+            $targetScpDomain = if ($AutodiscoverURL) { $AutodiscoverURL } else { $InternalURL }
+            $autoDiscoverUri = "https://$targetScpDomain/Autodiscover/Autodiscover.xml"
+
+            if (Get-Command Set-ClientAccessService -ErrorAction SilentlyContinue) {
+                Get-ClientAccessService $srv | Set-ClientAccessService -AutoDiscoverServiceInternalUri $autoDiscoverUri
+            } else {
+                Get-ClientAccessServer $srv | Set-ClientAccessServer -AutoDiscoverServiceInternalUri $autoDiscoverUri
+            }
+
+            Write-Host "`n[✓] Successfully configured '$srv'.`n" -ForegroundColor Green
         }
     }
 }
 
 End {
-
-    Write-Host "İşlemler tamamlandı."
-    Write-Host "Detaylı bilgi, https://wiki.maestropanel.com/powershell-script-ile-exchange-internalexternal-url"
-
+    Write-Host "[i] All tasks finished." -ForegroundColor Cyan
 }
-
-#...................................
-# Finished
-#...................................
