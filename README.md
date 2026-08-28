@@ -12,15 +12,56 @@
 
 - ⚡ **All Virtual Directories:** Automatically configures OWA, ECP, ActiveSync, EWS, OAB, MAPI/HTTP, and Outlook Anywhere.
 - 🔍 **Smart Autodiscover SCP:** Sets AD SCP to your trusted domain or clears it (`$null`) for **Office 365 / EXO Relay** setups.
-- ✉️ **Send Connector (Optional):** Creates an outbound Internet Send Connector (`SMTP:*`, DNS routing) if missing.
-- 📦 **Message Size Limits (Optional):** Sets global send/receive limits across Transport and all connectors in one shot.
-- 🛡️ **Safe by Default:** Strips URL typos, supports `-WhatIf` dry-runs, and protects `/powershell` VDir to keep EMS working.
+- ✉️ **Send Connector:** Creates an outbound Internet Send Connector (`SMTP:*`, DNS routing) if missing (`-CreateSendConnector`).
+- 📦 **Message Limits:** Sets global send/receive limits across Transport and all connectors in one shot (`-MaxMessageSize "50MB"`).
+- 🛡️ **Safe by Default:** Strips URL typos, supports `-WhatIf` dry-runs, and protects `/powershell` VDir to preserve EMS remoting.
 
 ---
 
-## 🚀 Quick Start Examples
+## 🖥️ Demo / Terminal Preview
 
-### 1. Standard Full Setup (URLs + Send Connector + 50MB Limits)
+```text
+PS C:\> .\SetExchangeURLs.ps1 -Server "EXCH01" `
+    -InternalURL "mail.contoso.com" `
+    -ExternalURL "mail.contoso.com" `
+    -CreateSendConnector `
+    -MaxMessageSize "50MB"
+
+[*] Checking Exchange Management Session...
+[+] Configuring Organization Message Size Limits (50MB)...
+    [✓] Organization Transport, Send, and Receive connector limits set to 50MB.
+[+] Checking Outbound Internet Send Connector...
+    [✓] Successfully created 'Outbound to Internet' Send Connector.
+
+========================================================
+ Configuring Exchange Server: EXCH01
+ Internal URL       : https://mail.contoso.com
+ External URL       : https://mail.contoso.com
+ Authentication     : Negotiate
+ Autodiscover SCP   : https://mail.contoso.com/Autodiscover/Autodiscover.xml
+========================================================
+
+[+] Configuring Outlook Anywhere...
+[+] Configuring Outlook on the Web (OWA)...
+[+] Configuring Exchange Control Panel (ECP)...
+[+] Configuring Exchange ActiveSync (EAS)...
+[+] Configuring Exchange Web Services (EWS)...
+[+] Configuring Offline Address Book (OAB)...
+[+] Configuring MAPI over HTTP...
+[+] Configuring Autodiscover SCP Internal URI...
+
+[✓] Successfully configured 'EXCH01'.
+
+========================================================
+ [✓] Execution Complete!
+========================================================
+```
+
+---
+
+## 🚀 Quick Examples
+
+### 1. Full Setup (URLs + Send Connector + 50MB Limits)
 ```powershell
 .\SetExchangeURLs.ps1 -Server "EXCH01" `
     -InternalURL "mail.contoso.com" `
@@ -29,7 +70,7 @@
     -MaxMessageSize "50MB"
 ```
 
-### 2. Basic URL Configuration
+### 2. Basic URL Configuration Only
 ```powershell
 .\SetExchangeURLs.ps1 -Server "EXCH01" -InternalURL "mail.contoso.com" -ExternalURL "mail.contoso.com"
 ```
